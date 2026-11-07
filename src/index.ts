@@ -1,5 +1,7 @@
 import { routeRequest } from './routes';
 
-export default {
+const worker: { fetch: ExportedHandlerFetchHandler<Env> } = {
 	fetch: routeRequest,
-} satisfies ExportedHandler<Env>;
+};
+
+export default worker;
