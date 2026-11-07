@@ -19,6 +19,7 @@ function stubCache(cachedResponse?: Response) {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
 
 describe('game search endpoint', () => {
@@ -153,13 +154,23 @@ describe('game detail endpoint', () => {
 	it('fetches a game by ID using a fixed field selection', async () => {
 		stubCache();
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-			if (String(input).includes('oauth2/token')) {
+			const url = String(input);
+			if (url.includes('oauth2/token')) {
 				return Response.json({ access_token: 'detail-token', expires_in: 3600 });
 			}
-			expect(String(init?.body)).toContain('where id = 42;');
-			expect(String(init?.body)).toContain('fields id, name, slug, summary');
-			expect(String(init?.body)).toContain('involved_companies.company.name');
-			return Response.json([{ id: 42, name: 'Test game', summary: 'Details' }]);
+			const query = String(init?.body);
+			if (url.endsWith('/games')) {
+				expect(query).toContain('where id = 42;');
+				expect(query).toContain('fields id, name, slug, summary');
+				expect(query).toContain('involved_companies.company.name');
+				return Response.json([{ id: 42, name: 'Test game', summary: 'Details' }]);
+			}
+			expect(url.endsWith('/game_time_to_beats')).toBe(true);
+			expect(query).toContain('where game_id = 42;');
+			expect(query).toContain('fields game_id, hastily, normally, completely, count;');
+			return Response.json([
+				{ game_id: 42, hastily: 3600, normally: 7200, completely: 14400, count: 25 },
+			]);
 		});
 		vi.stubGlobal('fetch', fetchMock);
 
@@ -171,8 +182,68 @@ describe('game detail endpoint', () => {
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({
-			game: { id: 42, name: 'Test game', summary: 'Details' },
+			game: {
+				id: 42,
+				name: 'Test game',
+				summary: 'Details',
+				time_to_beat: { hastily: 3600, normally: 7200, completely: 14400, count: 25 },
+			},
 		});
+	});
+
+	it('returns null Time to Beat data when IGDB has no record', async () => {
+		stubCache();
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes('oauth2/token')) {
+				return Response.json({ access_token: 'empty-time-token', expires_in: 3600 });
+			}
+			return url.endsWith('/games')
+				? Response.json([{ id: 43, name: 'No estimate' }])
+				: Response.json([]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const response = await worker.fetch(
+			new IncomingRequest('https://example.com/games/43'),
+			{ ...testEnv, TWITCH_CLIENT_ID: 'empty-time-test' },
+			createExecutionContext(),
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			game: { id: 43, name: 'No estimate', time_to_beat: null },
+		});
+	});
+
+	it('returns game details with null Time to Beat data when its IGDB request fails', async () => {
+		stubCache();
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes('oauth2/token')) {
+				return Response.json({ access_token: 'failed-time-token', expires_in: 3600 });
+			}
+			return url.endsWith('/games')
+				? Response.json([{ id: 46, name: 'Available details' }])
+				: new Response(null, { status: 503 });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const response = await worker.fetch(
+			new IncomingRequest('https://example.com/games/46'),
+			{ ...testEnv, TWITCH_CLIENT_ID: 'failed-time-test' },
+			createExecutionContext(),
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			game: { id: 46, name: 'Available details', time_to_beat: null },
+		});
+		expect(errorSpy).toHaveBeenCalledWith(
+			'IGDB game time to beat request failed for game 46',
+			expect.any(Error),
+		);
 	});
 
 	it('returns 404 when IGDB has no matching game', async () => {

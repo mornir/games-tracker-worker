@@ -1,9 +1,10 @@
-import type { Env, Game } from '../types';
-import { queryGames } from './igdb';
+import type { Env, Game, TimeToBeat } from '../types';
+import { queryGameTimeToBeats, queryGames } from './igdb';
 
 const SEARCH_FIELDS = 'id, name, slug, cover.url, first_release_date, rating';
 const DETAIL_FIELDS =
 	'id, name, slug, summary, storyline, cover.url, artworks.url, screenshots.url, first_release_date, rating, rating_count, genres.name, platforms.name, game_modes.name, themes.name, involved_companies.company.name, involved_companies.developer, involved_companies.publisher';
+const TIME_TO_BEAT_FIELDS = 'game_id, hastily, normally, completely, count';
 
 function escapeApicalypseString(value: string): string {
 	return value
@@ -48,5 +49,26 @@ export async function getGame(id: number, env: Env): Promise<Game | undefined> {
 		`where id = ${id}; fields ${DETAIL_FIELDS}; limit 1;`,
 		env,
 	);
-	return game;
+	if (!game) return undefined;
+
+	let timeToBeat: TimeToBeat | null = null;
+	try {
+		const [record] = await queryGameTimeToBeats(
+			'game_time_to_beats',
+			`where game_id = ${id}; fields ${TIME_TO_BEAT_FIELDS}; limit 1;`,
+			env,
+		);
+		if (record) {
+			timeToBeat = {
+				hastily: record.hastily ?? null,
+				normally: record.normally ?? null,
+				completely: record.completely ?? null,
+				count: record.count ?? null,
+			};
+		}
+	} catch (error) {
+		console.error(`IGDB game time to beat request failed for game ${id}`, error);
+	}
+
+	return { ...game, time_to_beat: timeToBeat };
 }

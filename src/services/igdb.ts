@@ -1,4 +1,4 @@
-import type { Env, Game } from '../types';
+import type { Env, Game, GameTimeToBeatRecord } from '../types';
 
 let cachedToken: { clientId: string; value: string; expiresAt: number } | undefined;
 let tokenRequest: { clientId: string; promise: Promise<string> } | undefined;
@@ -56,7 +56,48 @@ async function getAccessToken(env: Env): Promise<string> {
 	}
 }
 
-export async function queryGames(path: 'games', query: string, env: Env): Promise<Game[]> {
+function isGame(value: unknown): value is Game {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'id' in value &&
+		typeof value.id === 'number' &&
+		Number.isSafeInteger(value.id)
+	);
+}
+
+function isOptionalIntegerField(
+	value: object,
+	field: 'hastily' | 'normally' | 'completely' | 'count',
+): boolean {
+	if (!(field in value)) return true;
+	const fieldValue: unknown = Reflect.get(value, field);
+	return (
+		fieldValue === null ||
+		(typeof fieldValue === 'number' && Number.isSafeInteger(fieldValue))
+	);
+}
+
+function isGameTimeToBeat(value: unknown): value is GameTimeToBeatRecord {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'game_id' in value &&
+		typeof value.game_id === 'number' &&
+		Number.isSafeInteger(value.game_id) &&
+		isOptionalIntegerField(value, 'hastily') &&
+		isOptionalIntegerField(value, 'normally') &&
+		isOptionalIntegerField(value, 'completely') &&
+		isOptionalIntegerField(value, 'count')
+	);
+}
+
+async function queryIGDB<T>(
+	path: 'games' | 'game_time_to_beats',
+	query: string,
+	env: Env,
+	isValidResult: (value: unknown) => value is T,
+): Promise<T[]> {
 	const accessToken = await getAccessToken(env);
 	const response = await fetch(`https://api.igdb.com/v4/${path}`, {
 		method: 'POST',
@@ -74,19 +115,28 @@ export async function queryGames(path: 'games', query: string, env: Env): Promis
 	}
 
 	const results: unknown = await response.json();
-	if (
-		!Array.isArray(results) ||
-		!results.every(
-			(game): game is Game =>
-				typeof game === 'object' &&
-				game !== null &&
-				'id' in game &&
-				typeof game.id === 'number' &&
-				Number.isSafeInteger(game.id),
-		)
-	) {
-		throw new Error(`IGDB ${path} response did not contain valid game results`);
+	if (!Array.isArray(results)) {
+		throw new Error(`IGDB ${path} response did not contain valid results`);
 	}
 
-	return results;
+	const validatedResults: T[] = [];
+	for (const result of results) {
+		if (!isValidResult(result)) {
+			throw new Error(`IGDB ${path} response did not contain valid results`);
+		}
+		validatedResults.push(result);
+	}
+	return validatedResults;
+}
+
+export function queryGames(path: 'games', query: string, env: Env): Promise<Game[]> {
+	return queryIGDB(path, query, env, isGame);
+}
+
+export function queryGameTimeToBeats(
+	path: 'game_time_to_beats',
+	query: string,
+	env: Env,
+): Promise<GameTimeToBeatRecord[]> {
+	return queryIGDB(path, query, env, isGameTimeToBeat);
 }

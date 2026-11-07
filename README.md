@@ -32,7 +32,10 @@ Start the local Worker with `pnpm run dev`.
   games are removed by ID, and results from one successful search are returned
   if the other search fails.
 - `GET /games/123` returns `{ "game": {...} }` with detailed game information,
-  or a JSON `404` error if the game does not exist.
+  including a `time_to_beat` object with `hastily`, `normally`, and
+  `completely` estimates in seconds and a submission `count`. The property is
+  `null` when IGDB has no estimate or its Time to Beat request fails. The
+  endpoint returns a JSON `404` error if the game does not exist.
 
 Successful game responses are cached for up to five minutes at the edge and one
 minute in clients. Errors are returned as JSON and are not cached. Other paths,
