@@ -36,6 +36,20 @@ The Worker returns IGDB's response body and status. Any valid IGDB v4 endpoint
 name can be used after `/v4/` (for example, `/v4/platforms`); requests must use
 POST. `GET /health` is available for a basic health check.
 
+The Android app can use `POST /games/search` with a JSON body:
+
+```http
+POST /games/search
+Content-Type: application/json
+
+{"query":"zelda"}
+```
+
+The endpoint runs an IGDB relevance search and a name-prefix search in parallel,
+then returns `{ "games": [...] }`, with relevance matches first and duplicates
+removed by IGDB game ID. If only one IGDB query succeeds, its results are still
+returned.
+
 ## Access control
 
 The proxy endpoint is currently public: anyone who knows its URL can send
