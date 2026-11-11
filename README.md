@@ -28,9 +28,9 @@ Start the local Worker with `pnpm run dev`.
 
 - `GET /health` returns `{ "status": "ok" }`.
 - `GET /games/search?q=zelda` searches by IGDB relevance and game-name prefix,
-  returning `{ "games": [...] }`. Relevance matches appear first, duplicate
-  games are removed by ID, and results from one successful search are returned
-  if the other search fails.
+  with exact title matches first, returning `{ "games": [...] }`. Duplicate
+  games are removed by ID, and results from any successful search are returned
+  if another search fails.
 - `GET /games/123` returns `{ "game": {...} }` with detailed game information,
   including a `time_to_beat` object with `hastily`, `normally`, and
   `completely` estimates in seconds and a submission `count`. The property is

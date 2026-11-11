@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe('game search endpoint', () => {
-	it('runs both IGDB searches, merges by ID, and preserves relevance ordering', async () => {
+	it('puts exact title matches first, then merges relevance and prefix results by ID', async () => {
 		const cache = stubCache();
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = String(input);
@@ -33,7 +33,12 @@ describe('game search endpoint', () => {
 
 			const query = String(init?.body);
 			return Response.json(
-				query.startsWith('search')
+				query.startsWith('where name =')
+					? [
+							{ id: 2, name: 'Exact title match' },
+							{ id: 4, name: 'Another exact title match' },
+						]
+					: query.startsWith('search')
 					? [
 							{ id: 1, name: 'Relevant' },
 							{ id: 2, name: 'Also relevant' },
@@ -55,34 +60,64 @@ describe('game search endpoint', () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({
 			games: [
+				{ id: 2, name: 'Exact title match' },
+				{ id: 4, name: 'Another exact title match' },
 				{ id: 1, name: 'Relevant' },
-				{ id: 2, name: 'Also relevant' },
 				{ id: 3, name: 'Prefix match' },
 			],
 		});
 		const queries = fetchMock.mock.calls
 			.map(([, init]) => String(init?.body))
 			.filter((body) => body.includes('fields id, name'));
-		expect(queries).toHaveLength(2);
+		expect(queries).toHaveLength(3);
 		const escapedQuery = 'zelda\\"\\\\';
-		expect(queries[0]).toContain(`search "${escapedQuery}";`);
-		expect(queries[1]).toContain(`where name ~ "${escapedQuery}"*;`);
-		expect(queries[0]).toContain('fields id, name, slug, cover.url, first_release_date, rating;');
+		expect(queries[0]).toContain(`where name = "${escapedQuery}";`);
+		expect(queries[1]).toContain(`search "${escapedQuery}";`);
 		expect(queries[1]).toContain('fields id, name, slug, cover.url, first_release_date, rating;');
+		expect(queries[2]).toContain(`where name ~ "${escapedQuery}"*;`);
 		expect(response.headers.get('Cache-Control')).toBe('public, max-age=60, s-maxage=300');
 		expect(cache.put).toHaveBeenCalledOnce();
 	});
 
-	it('returns the successful result set if the other IGDB request fails', async () => {
+	it('returns Dispatch as the first result for an exact title search', async () => {
+		stubCache();
+		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			if (String(input).includes('oauth2/token')) {
+				return Response.json({ access_token: 'dispatch-token', expires_in: 3600 });
+			}
+
+			const query = String(init?.body);
+			return Response.json(
+				query.startsWith('where name =')
+					? [{ id: 325609, name: 'Dispatch' }]
+					: [{ id: 1, name: 'Other result' }],
+			);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const response = await worker.fetch(
+			new IncomingRequest('https://example.com/games/search?q=dispatch'),
+			{ ...testEnv, TWITCH_CLIENT_ID: 'dispatch-test' },
+			createExecutionContext(),
+		);
+
+		expect(response.status).toBe(200);
+		expect((await response.json()).games[0]).toEqual({ id: 325609, name: 'Dispatch' });
+	});
+
+	it('returns the successful result sets if one IGDB request fails', async () => {
 		stubCache();
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			if (String(input).includes('oauth2/token')) {
 				return Response.json({ access_token: 'test-token', expires_in: 3600 });
 			}
+			if (String(init?.body).startsWith('where name =')) {
+				return new Response(null, { status: 503 });
+			}
 			if (String(init?.body).startsWith('search')) {
 				return Response.json([{ id: 9, name: 'Available result' }]);
 			}
-			return new Response(null, { status: 503 });
+			return Response.json([{ id: 10, name: 'Prefix result' }]);
 		});
 		vi.stubGlobal('fetch', fetchMock);
 
@@ -93,7 +128,12 @@ describe('game search endpoint', () => {
 		);
 
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ games: [{ id: 9, name: 'Available result' }] });
+		expect(await response.json()).toEqual({
+			games: [
+				{ id: 9, name: 'Available result' },
+				{ id: 10, name: 'Prefix result' },
+			],
+		});
 	});
 
 	it('returns an error when both IGDB requests fail', async () => {

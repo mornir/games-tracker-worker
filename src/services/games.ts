@@ -15,24 +15,33 @@ function escapeApicalypseString(value: string): string {
 
 export async function searchGames(query: string, env: Env): Promise<Game[]> {
 	const escapedQuery = escapeApicalypseString(query);
-	const [relevance, prefix] = await Promise.allSettled([
+	const [exact, relevance, prefix] = await Promise.allSettled([
+		queryGames('games', `where name = "${escapedQuery}"; fields ${SEARCH_FIELDS};`, env),
 		queryGames('games', `search "${escapedQuery}"; fields ${SEARCH_FIELDS};`, env),
 		queryGames('games', `where name ~ "${escapedQuery}"*; fields ${SEARCH_FIELDS};`, env),
 	]);
 
+	if (exact.status === 'rejected') {
+		console.error('IGDB exact-title game search failed', exact.reason);
+	}
 	if (relevance.status === 'rejected') {
 		console.error('IGDB relevance game search failed', relevance.reason);
 	}
 	if (prefix.status === 'rejected') {
 		console.error('IGDB prefix game search failed', prefix.reason);
 	}
-	if (relevance.status === 'rejected' && prefix.status === 'rejected') {
+	if (exact.status === 'rejected' && relevance.status === 'rejected' && prefix.status === 'rejected') {
 		throw new Error('Unable to complete the IGDB game search');
 	}
 
 	const games = new Map<number, Game>();
+	if (exact.status === 'fulfilled') {
+		for (const game of exact.value) games.set(game.id, game);
+	}
 	if (relevance.status === 'fulfilled') {
-		for (const game of relevance.value) games.set(game.id, game);
+		for (const game of relevance.value) {
+			if (!games.has(game.id)) games.set(game.id, game);
+		}
 	}
 	if (prefix.status === 'fulfilled') {
 		for (const game of prefix.value) {
