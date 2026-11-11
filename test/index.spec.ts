@@ -105,6 +105,42 @@ describe('game search endpoint', () => {
 		expect((await response.json()).games[0]).toEqual({ id: 325609, name: 'Dispatch' });
 	});
 
+	it('puts games without a rating after rated games while preserving result order', async () => {
+		stubCache();
+		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			if (String(input).includes('oauth2/token')) {
+				return Response.json({ access_token: 'rating-token', expires_in: 3600 });
+			}
+
+			const query = String(init?.body);
+			return Response.json(
+				query.startsWith('where name =')
+					? [
+							{ id: 1, name: 'Unrated exact match' },
+							{ id: 2, name: 'Rated exact match', rating: 80 },
+						]
+					: query.startsWith('search')
+					? [
+							{ id: 3, name: 'Rated relevant match', rating: 75 },
+							{ id: 4, name: 'Null-rated relevant match', rating: null },
+						]
+					: [{ id: 5, name: 'Unrated prefix match' }],
+			);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const response = await worker.fetch(
+			new IncomingRequest('https://example.com/games/search?q=test'),
+			{ ...testEnv, TWITCH_CLIENT_ID: 'rating-test' },
+			createExecutionContext(),
+		);
+
+		expect(response.status).toBe(200);
+		expect((await response.json()).games.map((game: { id: number }) => game.id)).toEqual([
+			2, 3, 1, 4, 5,
+		]);
+	});
+
 	it('returns the successful result sets if one IGDB request fails', async () => {
 		stubCache();
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

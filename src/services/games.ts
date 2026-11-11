@@ -49,15 +49,11 @@ export async function searchGames(query: string, env: Env): Promise<Game[]> {
 		}
 	}
 
-	return [...games.values()];
+	return [...games.values()].sort((a, b) => Number(a.rating == null) - Number(b.rating == null));
 }
 
 export async function getGame(id: number, env: Env): Promise<Game | undefined> {
-	const [game] = await queryGames(
-		'games',
-		`where id = ${id}; fields ${DETAIL_FIELDS}; limit 1;`,
-		env,
-	);
+	const [game] = await queryGames('games', `where id = ${id}; fields ${DETAIL_FIELDS}; limit 1;`, env);
 	if (!game) return undefined;
 
 	let timeToBeat: TimeToBeat | null = null;
