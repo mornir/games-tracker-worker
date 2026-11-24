@@ -38,6 +38,8 @@ describe('game search endpoint', () => {
 							{ id: 2, name: 'Exact title match' },
 							{ id: 4, name: 'Another exact title match' },
 						]
+					: query.startsWith('where slug')
+					? [{ id: 5, name: 'Slug match' }]
 					: query.startsWith('search')
 					? [
 							{ id: 1, name: 'Relevant' },
@@ -62,6 +64,7 @@ describe('game search endpoint', () => {
 			games: [
 				{ id: 2, name: 'Exact title match' },
 				{ id: 4, name: 'Another exact title match' },
+				{ id: 5, name: 'Slug match' },
 				{ id: 1, name: 'Relevant' },
 				{ id: 3, name: 'Prefix match' },
 			],
@@ -69,14 +72,54 @@ describe('game search endpoint', () => {
 		const queries = fetchMock.mock.calls
 			.map(([, init]) => String(init?.body))
 			.filter((body) => body.includes('fields id, name'));
-		expect(queries).toHaveLength(3);
+		expect(queries).toHaveLength(4);
 		const escapedQuery = 'zelda\\"\\\\';
 		expect(queries[0]).toContain(`where name = "${escapedQuery}";`);
-		expect(queries[1]).toContain(`search "${escapedQuery}";`);
-		expect(queries[1]).toContain('fields id, name, slug, cover.url, first_release_date, rating;');
-		expect(queries[2]).toContain(`where name ~ "${escapedQuery}"*;`);
+		expect(queries[1]).toContain('where slug ~ "zelda"*;');
+		expect(queries[2]).toContain(`search "${escapedQuery}";`);
+		expect(queries[2]).toContain('fields id, name, slug, cover.url, first_release_date, rating;');
+		expect(queries[3]).toContain(`where name ~ "${escapedQuery}"*;`);
 		expect(response.headers.get('Cache-Control')).toBe('public, max-age=60, s-maxage=300');
 		expect(cache.put).toHaveBeenCalledOnce();
+	});
+
+	it('finds Pokémon Añil using normalized slug prefixes for accented and unaccented queries', async () => {
+		stubCache();
+		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			if (String(input).includes('oauth2/token')) {
+				return Response.json({ access_token: 'anil-token', expires_in: 3600 });
+			}
+
+			const query = String(init?.body);
+			return query.startsWith('where slug ~')
+				? Response.json([{ id: 123, name: 'Pokémon Añil', slug: 'pokemon-anil' }])
+				: Response.json([]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		for (const [clientId, query] of [
+			['anil-unaccented-test', 'pokemon anil'],
+			['anil-accented-test', 'Pokémon Añil'],
+		]) {
+			const response = await worker.fetch(
+				new IncomingRequest(`https://example.com/games/search?q=${encodeURIComponent(query)}`),
+				{ ...testEnv, TWITCH_CLIENT_ID: clientId },
+				createExecutionContext(),
+			);
+
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({
+				games: [{ id: 123, name: 'Pokémon Añil', slug: 'pokemon-anil' }],
+			});
+		}
+
+		const queries = fetchMock.mock.calls
+			.map(([, init]) => String(init?.body))
+			.filter((body) => body.startsWith('where slug ~'));
+		expect(queries).toEqual([
+			'where slug ~ "pokemon-anil"*; fields id, name, slug, cover.url, first_release_date, rating;',
+			'where slug ~ "pokemon-anil"*; fields id, name, slug, cover.url, first_release_date, rating;',
+		]);
 	});
 
 	it('returns Dispatch as the first result for an exact title search', async () => {
@@ -119,6 +162,8 @@ describe('game search endpoint', () => {
 							{ id: 1, name: 'Unrated exact match' },
 							{ id: 2, name: 'Rated exact match', rating: 80 },
 						]
+					: query.startsWith('where slug ~')
+					? []
 					: query.startsWith('search')
 					? [
 							{ id: 3, name: 'Rated relevant match', rating: 75 },
@@ -147,6 +192,7 @@ describe('game search endpoint', () => {
 			if (String(input).includes('oauth2/token')) {
 				return Response.json({ access_token: 'test-token', expires_in: 3600 });
 			}
+			if (String(init?.body).startsWith('where slug ~')) return Response.json([]);
 			if (String(init?.body).startsWith('where name =')) {
 				return new Response(null, { status: 503 });
 			}
