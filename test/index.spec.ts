@@ -140,7 +140,8 @@ describe('game search endpoint', () => {
 		);
 
 		expect(response.status).toBe(200);
-		expect((await response.json()).games[0]).toEqual({ id: 325609, name: 'Dispatch' });
+		const body = await response.json<{ games: Array<{ id: number; name: string }> }>();
+		expect(body.games[0]).toEqual({ id: 325609, name: 'Dispatch' });
 	});
 
 	it('puts games without a rating after rated games while preserving result order', async () => {
@@ -176,7 +177,8 @@ describe('game search endpoint', () => {
 		);
 
 		expect(response.status).toBe(200);
-		expect((await response.json()).games.map((game: { id: number }) => game.id)).toEqual([
+		const body = await response.json<{ games: Array<{ id: number }> }>();
+		expect(body.games.map((game) => game.id)).toEqual([
 			2, 3, 1, 4,
 		]);
 	});
