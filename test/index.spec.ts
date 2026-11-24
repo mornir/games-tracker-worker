@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe('game search endpoint', () => {
-	it('puts exact title matches first, then merges relevance and prefix results by ID', async () => {
+	it('puts exact title matches first, then merges slug and relevance results by ID', async () => {
 		const cache = stubCache();
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = String(input);
@@ -45,10 +45,7 @@ describe('game search endpoint', () => {
 							{ id: 1, name: 'Relevant' },
 							{ id: 2, name: 'Also relevant' },
 						]
-					: [
-							{ id: 2, name: 'Duplicate' },
-							{ id: 3, name: 'Prefix match' },
-						],
+					: [],
 			);
 		});
 		vi.stubGlobal('fetch', fetchMock);
@@ -66,19 +63,17 @@ describe('game search endpoint', () => {
 				{ id: 4, name: 'Another exact title match' },
 				{ id: 5, name: 'Slug match' },
 				{ id: 1, name: 'Relevant' },
-				{ id: 3, name: 'Prefix match' },
 			],
 		});
 		const queries = fetchMock.mock.calls
 			.map(([, init]) => String(init?.body))
 			.filter((body) => body.includes('fields id, name'));
-		expect(queries).toHaveLength(4);
+		expect(queries).toHaveLength(3);
 		const escapedQuery = 'zelda\\"\\\\';
 		expect(queries[0]).toContain(`where name = "${escapedQuery}";`);
 		expect(queries[1]).toContain('where slug ~ "zelda"*;');
 		expect(queries[2]).toContain(`search "${escapedQuery}";`);
 		expect(queries[2]).toContain('fields id, name, slug, cover.url, first_release_date, rating;');
-		expect(queries[3]).toContain(`where name ~ "${escapedQuery}"*;`);
 		expect(response.headers.get('Cache-Control')).toBe('public, max-age=60, s-maxage=300');
 		expect(cache.put).toHaveBeenCalledOnce();
 	});
@@ -169,7 +164,7 @@ describe('game search endpoint', () => {
 							{ id: 3, name: 'Rated relevant match', rating: 75 },
 							{ id: 4, name: 'Null-rated relevant match', rating: null },
 						]
-					: [{ id: 5, name: 'Unrated prefix match' }],
+					: [],
 			);
 		});
 		vi.stubGlobal('fetch', fetchMock);
@@ -182,7 +177,7 @@ describe('game search endpoint', () => {
 
 		expect(response.status).toBe(200);
 		expect((await response.json()).games.map((game: { id: number }) => game.id)).toEqual([
-			2, 3, 1, 4, 5,
+			2, 3, 1, 4,
 		]);
 	});
 
@@ -192,14 +187,16 @@ describe('game search endpoint', () => {
 			if (String(input).includes('oauth2/token')) {
 				return Response.json({ access_token: 'test-token', expires_in: 3600 });
 			}
-			if (String(init?.body).startsWith('where slug ~')) return Response.json([]);
+			if (String(init?.body).startsWith('where slug ~')) {
+				return Response.json([{ id: 10, name: 'Slug result' }]);
+			}
 			if (String(init?.body).startsWith('where name =')) {
 				return new Response(null, { status: 503 });
 			}
 			if (String(init?.body).startsWith('search')) {
 				return Response.json([{ id: 9, name: 'Available result' }]);
 			}
-			return Response.json([{ id: 10, name: 'Prefix result' }]);
+			return Response.json([]);
 		});
 		vi.stubGlobal('fetch', fetchMock);
 
@@ -212,13 +209,13 @@ describe('game search endpoint', () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({
 			games: [
+				{ id: 10, name: 'Slug result' },
 				{ id: 9, name: 'Available result' },
-				{ id: 10, name: 'Prefix result' },
 			],
 		});
 	});
 
-	it('returns an error when both IGDB requests fail', async () => {
+	it('returns an error when all IGDB search requests fail', async () => {
 		stubCache();
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 			if (String(input).includes('oauth2/token')) {

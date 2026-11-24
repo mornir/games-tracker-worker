@@ -25,7 +25,7 @@ function normalizeSearchSlug(value: string): string {
 export async function searchGames(query: string, env: Env): Promise<Game[]> {
 	const escapedQuery = escapeApicalypseString(query);
 	const slug = normalizeSearchSlug(query);
-	const [exact, slugPrefix, relevance, prefix] = await Promise.allSettled([
+	const [exact, slugPrefix, relevance] = await Promise.allSettled([
 		queryGames('games', `where name = "${escapedQuery}"; fields ${SEARCH_FIELDS};`, env),
 		slug
 			? queryGames(
@@ -35,7 +35,6 @@ export async function searchGames(query: string, env: Env): Promise<Game[]> {
 				)
 			: Promise.resolve([]),
 		queryGames('games', `search "${escapedQuery}"; fields ${SEARCH_FIELDS};`, env),
-		queryGames('games', `where name ~ "${escapedQuery}"*; fields ${SEARCH_FIELDS};`, env),
 	]);
 
 	if (exact.status === 'rejected') {
@@ -47,14 +46,10 @@ export async function searchGames(query: string, env: Env): Promise<Game[]> {
 	if (relevance.status === 'rejected') {
 		console.error('IGDB relevance game search failed', relevance.reason);
 	}
-	if (prefix.status === 'rejected') {
-		console.error('IGDB prefix game search failed', prefix.reason);
-	}
 	if (
 		exact.status === 'rejected' &&
 		slugPrefix.status === 'rejected' &&
-		relevance.status === 'rejected' &&
-		prefix.status === 'rejected'
+		relevance.status === 'rejected'
 	) {
 		throw new Error('Unable to complete the IGDB game search');
 	}
@@ -70,11 +65,6 @@ export async function searchGames(query: string, env: Env): Promise<Game[]> {
 	}
 	if (relevance.status === 'fulfilled') {
 		for (const game of relevance.value) {
-			if (!games.has(game.id)) games.set(game.id, game);
-		}
-	}
-	if (prefix.status === 'fulfilled') {
-		for (const game of prefix.value) {
 			if (!games.has(game.id)) games.set(game.id, game);
 		}
 	}
